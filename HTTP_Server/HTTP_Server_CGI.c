@@ -12,20 +12,22 @@
 #include "cmsis_os2.h"                  // ::CMSIS:RTOS2
 #include "rl_net.h"                     // Keil.MDK-Pro::Network:CORE
 
-#include "Board_LED.h"                  // ::Board Support:LED
+#include "stm32f4xx_hal.h"
+//#include "Board_LED.h"                  // ::Board Support:LED
 
 #if      defined (__ARMCC_VERSION) && (__ARMCC_VERSION >= 6010050)
 #pragma  clang diagnostic push
 #pragma  clang diagnostic ignored "-Wformat-nonliteral"
 #endif
 
-// http_server.c
-extern uint16_t AD_in (uint32_t ch);
-extern uint8_t  get_button (void);
+//// http_server.c
+//extern uint16_t AD_in (uint32_t ch);
+//extern uint8_t  get_button (void);
 
-extern bool LEDrun;
-extern char lcd_text[2][20+1];
-extern osThreadId_t TID_Display;
+bool LEDrun;
+bool LEDon;
+//extern char lcd_text[2][20+1];
+//extern osThreadId_t TID_Display;
 
 // Local variables.
 static uint8_t P2;
@@ -40,14 +42,19 @@ typedef struct {
 #define MYBUF(p)        ((MY_BUF *)p)
 
 // Process query string received by GET request.
+/* Procesar parámetros de consulta (query) para que el servidor web pueda tomar decisiones
+   o realizar acciones basadas en ellos.*/
 void netCGI_ProcessQuery (const char *qstr) {
-  netIF_Option opt = netIF_OptionMAC_Address;
-  int16_t      typ = 0;
-  char var[40];
+  netIF_Option opt = netIF_OptionMAC_Address; // netIF_Option es un tipo enum definido en rl_net_ds.h (rl_net.h), dentro de HTTP_Server_CGI.c
+  int16_t      typ = 0; // Tipo de direccion IP
+  char var[40]; // Array de variables de entorno
 
   do {
     // Loop through all the parameters
-    qstr = netCGI_GetEnvVar (qstr, var, sizeof (var));
+    qstr = netCGI_GetEnvVar (qstr, var, sizeof (var)); /* para analizar las variables de entorno de la cadena de consulta y tomar acciones 
+		correspondientes en función de esas variables, como configurar opciones de red, controlar LEDs, y procesar datos recibidos en solicitudes POST.
+    Se rellena el array de las variables de entorno con la cadena de consulta y devuelve el puntero a la cadena de consulta que se actualiará y
+ 		apuntará al siguiente parámetro de la cadena de consulta. */
     // Check return string, 'qstr' now points to the next parameter
 
     switch (var[0]) {
@@ -86,9 +93,9 @@ void netCGI_ProcessQuery (const char *qstr) {
     }
 
     if ((var[0] != '\0') && (var[2] == '=')) {
-      netIP_aton (&var[3], typ, ip_addr);
+      netIP_aton (&var[3], typ, ip_addr); // Convierte una dir IP en forma de string a su forma binaria  y la almcena en ip_addr
       // Set required option
-      netIF_SetOption (NET_IF_CLASS_ETH, opt, ip_addr, sizeof(ip_addr));
+      netIF_SetOption (NET_IF_CLASS_ETH, opt, ip_addr, sizeof(ip_addr)); // Establecer opciones de configuracion de una interfaz de red
     }
   } while (qstr);
 }
@@ -100,98 +107,119 @@ void netCGI_ProcessQuery (const char *qstr) {
 //            - 3 = end of file upload (file close requested).
 //            - 4 = any XML encoded POST data (single or last stream).
 //            - 5 = the same as 4, but with more XML data to follow.
+/* Procesar los datos enviados en una solicitud HTTP POST al servidor web embebido, 
+   permitiendo que el servidor realice acciones dinámicas basadas en esos datos.*/ 
 void netCGI_ProcessData (uint8_t code, const char *data, uint32_t len) {
   char var[40],passw[12];
 
   if (code != 0) {
-    // Ignore all other codes
+    // Ignore all other codes: fuerza a que el tipo de code sea el 0 -> www-url-encoded form data
     return;
   }
 
-  P2 = 0;
-  LEDrun = true;
+  P2 = 0; 
+  LEDrun = true; // estaba comentado si no funciona
+	
+	LEDon = false;
   if (len == 0) {
     // No data or all items (radio, checkbox) are off
-    LED_SetOut (P2);
+//    LED_SetOut (P2);
     return;
   }
-  passw[0] = 1;
+  passw[0] = 1; // para señalizar o verificar mas adelante
   do {
-    // Parse all parameters
+    // Parse all parameters: analizar todos los parámetros una vez ha hecho las comprobaciones del tipo de code y la longitud de los datos
     data = netCGI_GetEnvVar (data, var, sizeof (var));
     if (var[0] != 0) {
-      // First character is non-null, string exists
-      if (strcmp (var, "led0=on") == 0) {
+      // First character is non-null, string exists: string siempre acaban en '/0' (caracter nulo)
+      if (strcmp (var, "led0=on") == 0) { // strcmp compara y devuelve '0' si son iguales
         P2 |= 0x01;
+				LEDon = !LEDon;
+//				if (LEDon){
+//					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+//				}else{
+//					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
+//				}
+				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
       }
       else if (strcmp (var, "led1=on") == 0) {
         P2 |= 0x02;
+				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
       }
       else if (strcmp (var, "led2=on") == 0) {
-        P2 |= 0x04;
+        //P2 |= 0x04;
+				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
       }
       else if (strcmp (var, "led3=on") == 0) {
-        P2 |= 0x08;
+        //P2 |= 0x08;
       }
       else if (strcmp (var, "led4=on") == 0) {
-        P2 |= 0x10;
+        //P2 |= 0x10;
       }
       else if (strcmp (var, "led5=on") == 0) {
-        P2 |= 0x20;
+        //P2 |= 0x20;
       }
       else if (strcmp (var, "led6=on") == 0) {
-        P2 |= 0x40;
+        //P2 |= 0x40;
       }
       else if (strcmp (var, "led7=on") == 0) {
-        P2 |= 0x80;
+        //P2 |= 0x80;
       }
       else if (strcmp (var, "ctrl=Browser") == 0) {
-        LEDrun = false;
-      }
-      else if ((strncmp (var, "pw0=", 4) == 0) ||
-               (strncmp (var, "pw2=", 4) == 0)) {
-        // Change password, retyped password
-        if (netHTTPs_LoginActive()) {
-          if (passw[0] == 1) {
-            strcpy (passw, var+4);
-          }
-          else if (strcmp (passw, var+4) == 0) {
-            // Both strings are equal, change the password
-            netHTTPs_SetPassword (passw);
-          }
-        }
+        LEDrun = false; // Estaba comentado
+			}
+			else if ((strncmp (var, "pw0=", 4) == 0) ||
+								 (strncmp (var, "pw2=", 4) == 0)) {
+					// Change password, retyped password
+					if (netHTTPs_LoginActive()) { // Si la autenticacion del servidor esta habilitada
+						if (passw[0] == 1) {
+							strcpy (passw, var+4); // Copia la cadena origen (var+4, esta operacion incrementa el puntero 4 posiciones) en la cadena destino (passw)
+						}
+						else if (strcmp (passw, var+4) == 0) {
+							// Both strings are equal, change the password
+							netHTTPs_SetPassword (passw); // Establece la nueva contraseña como maximo de 15 caracteres
+						}
+					}
       }
       else if (strncmp (var, "lcd1=", 5) == 0) {
         // LCD Module line 1 text
-        strcpy (lcd_text[0], var+5);
-        osThreadFlagsSet (TID_Display, 0x01);
+//        strcpy (lcd_text[0], var+5);
+//        osThreadFlagsSet (TID_Display, 0x01);
       }
       else if (strncmp (var, "lcd2=", 5) == 0) {
         // LCD Module line 2 text
-        strcpy (lcd_text[1], var+5);
-        osThreadFlagsSet (TID_Display, 0x01);
+//        strcpy (lcd_text[1], var+5);
+//        osThreadFlagsSet (TID_Display, 0x01);
       }
     }
   } while (data);
-  LED_SetOut (P2);
+//  LED_SetOut (P2); // Se encienden los leds que se hayan seleccionado
+//	  if(P2 == 1) {
+//			//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+//			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+//		}
+		
 }
 
 // Generate dynamic web data from a script line.
+/*  Procesar líneas de script específicas relacionadas con la generación de contenido web 
+    dinámico en un servidor web embebido. Estas líneas de script se analizan y se utilizan 
+    para generar contenido web dinámico que se envía como respuesta a las solicitudes HTTP entrantes. */
 uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *pcgi) {
   int32_t socket;
-  netTCP_State state;
-  NET_ADDR r_client;
-  const char *lang;
-  uint32_t len = 0U;
-  uint8_t id;
-  static uint32_t adv;
+  netTCP_State state; // estructura para el estado del puerto TCP (rl_net_ds.h)
+  NET_ADDR r_client; // estructura que contiene la dir IP, el tipo de IP y el puerto del cliente (rl_net_ds.h)
+  const char *lang; // puntero a cadena que se usará para comparar el lenguaje (idioma)
+  uint32_t len = 0U; // controla la longitud del buffer
+  uint8_t id; // indice para el check-box del led
+  //static uint32_t adv; // para valor analogico
   netIF_Option opt = netIF_OptionMAC_Address;
   int16_t      typ = 0;
 
   switch (env[0]) {
     // Analyze a 'c' script line starting position 2
     case 'a' :
-      // Network parameters from 'network.cgi'
+      // Network parameters from 'network.cgi' -> --/network.cgi
       switch (env[3]) {
         case '4': typ = NET_ADDR_IP4; break;
         case '6': typ = NET_ADDR_IP6; break;
@@ -237,9 +265,12 @@ uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *p
           break;
       }
 
-      netIF_GetOption (NET_IF_CLASS_ETH, opt, ip_addr, sizeof(ip_addr));
-      netIP_ntoa (typ, ip_addr, ip_string, sizeof(ip_string));
-      len = (uint32_t)sprintf (buf, &env[5], ip_string);
+      netIF_GetOption (NET_IF_CLASS_ETH, opt, ip_addr, sizeof(ip_addr)); /* Obtener las opciones de configuración de una interfaz de red como
+			Ethernet y almacenar estos valores en un buffer (opt) */
+      netIP_ntoa (typ, ip_addr, ip_string, sizeof(ip_string)); /* Convertir una IP binaria en un string según el tipo de IP, se usa 
+			sizeof(ip_string) para que la función no escriba más allá de los límites del buffer ip_string */
+      len = (uint32_t)sprintf (buf, &env[5], ip_string); /* Almacena en buf la cadena de caracteres ip_string con el formato que tenga &env[5]
+		 (puntero al quinto caracter de la cadena env), sprintf devuelve el nºcaracteres que tenga buf */
       break;
 
     case 'b':
@@ -250,13 +281,14 @@ uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *p
                                                LEDrun ? "selected" :    ""     );
         break;
       }
-      // LED CheckBoxes
+      // LED CheckBoxes: indica la casilla que se ha marcado como "checked" o ""
       id = env[2] - '0';
       if (id > 7) {
         id = 0;
       }
       id = (uint8_t)(1U << id);
       len = (uint32_t)sprintf (buf, &env[4], (P2 & id) ? "checked" : "");
+		
       break;
 
     case 'c':
@@ -334,47 +366,47 @@ uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *p
       break;
 
     case 'f':
-      // LCD Module control from 'lcd.cgi'
-      switch (env[2]) {
-        case '1':
-          len = (uint32_t)sprintf (buf, &env[4], lcd_text[0]);
-          break;
-        case '2':
-          len = (uint32_t)sprintf (buf, &env[4], lcd_text[1]);
-          break;
-      }
+//      // LCD Module control from 'lcd.cgi'
+//      switch (env[2]) {
+//        case '1':
+//          len = (uint32_t)sprintf (buf, &env[4], lcd_text[0]);
+//          break;
+//        case '2':
+//          len = (uint32_t)sprintf (buf, &env[4], lcd_text[1]);
+//          break;
+//      }
       break;
 
     case 'g':
-      // AD Input from 'ad.cgi'
-      switch (env[2]) {
-        case '1':
-          adv = AD_in (0);
-          len = (uint32_t)sprintf (buf, &env[4], adv);
-          break;
-        case '2':
-          len = (uint32_t)sprintf (buf, &env[4], (double)((float)adv*3.3f)/4096);
-          break;
-        case '3':
-          adv = (adv * 100) / 4096;
-          len = (uint32_t)sprintf (buf, &env[4], adv);
-          break;
-      }
+//      // AD Input from 'ad.cgi'
+//      switch (env[2]) {
+//        case '1':
+//          adv = AD_in (0);
+//          len = (uint32_t)sprintf (buf, &env[4], adv);
+//          break;
+//        case '2':
+//          len = (uint32_t)sprintf (buf, &env[4], (double)((float)adv*3.3f)/4096);
+//          break;
+//        case '3':
+//          adv = (adv * 100) / 4096;
+//          len = (uint32_t)sprintf (buf, &env[4], adv);
+//          break;
+//      }
       break;
 
     case 'x':
-      // AD Input from 'ad.cgx'
-      adv = AD_in (0);
-      len = (uint32_t)sprintf (buf, &env[1], adv);
+//      // AD Input from 'ad.cgx'
+//      adv = AD_in (0);
+//      len = (uint32_t)sprintf (buf, &env[1], adv);
       break;
 
     case 'y':
-      // Button state from 'button.cgx'
-      len = (uint32_t)sprintf (buf, "<checkbox><id>button%c</id><on>%s</on></checkbox>",
-                               env[1], (get_button () & (1 << (env[1]-'0'))) ? "true" : "false");
+//      // Button state from 'button.cgx'
+//      len = (uint32_t)sprintf (buf, "<checkbox><id>button%c</id><on>%s</on></checkbox>",
+//                               env[1], (get_button () & (1 << (env[1]-'0'))) ? "true" : "false");
       break;
   }
-  return (len);
+  return (len);  
 }
 
 #if      defined (__ARMCC_VERSION) && (__ARMCC_VERSION >= 6010050)
