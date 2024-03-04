@@ -25,12 +25,14 @@
 //extern uint8_t  get_button (void);
 
 bool LEDrun;
-bool LEDon;
-//extern char lcd_text[2][20+1];
+//extern char lcd_text[2][20+1]; matriz bidimensional de 2 filas de caracteres y en cada fila pueden haber 20 caracteres + 1('/0')
 //extern osThreadId_t TID_Display;
+extern osThreadId_t tid_ThDisplay;
+char textL1[20];
+char textL2[20];
 
 // Local variables.
-static uint8_t P2;
+static uint8_t P2; // sirve para el control de las casillas marcadas en el checkbox de los leds
 static uint8_t ip_addr[NET_ADDR_IP6_LEN];
 static char    ip_string[40];
 
@@ -118,9 +120,8 @@ void netCGI_ProcessData (uint8_t code, const char *data, uint32_t len) {
   }
 
   P2 = 0; 
-  LEDrun = true; // estaba comentado si no funciona
+  //LEDrun = true; // estaba comentado si no funciona
 	
-	LEDon = false;
   if (len == 0) {
     // No data or all items (radio, checkbox) are off
 //    LED_SetOut (P2);
@@ -132,23 +133,17 @@ void netCGI_ProcessData (uint8_t code, const char *data, uint32_t len) {
     data = netCGI_GetEnvVar (data, var, sizeof (var));
     if (var[0] != 0) {
       // First character is non-null, string exists: string siempre acaban en '/0' (caracter nulo)
-      if (strcmp (var, "led0=on") == 0) { // strcmp compara y devuelve '0' si son iguales
-        P2 |= 0x01;
-				LEDon = !LEDon;
-//				if (LEDon){
-//					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-//				}else{
-//					HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_RESET);
-//				}
-				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+      if (strcmp (var, "led0=on") == 0) { // strcmp compara y devuelve '0' si son iguales, "led0=on" solo se produce cuando la casilla esta seleccionada no cuando se desselecciona
+        P2 |= 0x01; // esta OR sirve para activar el bit menos significativo
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
       }
       else if (strcmp (var, "led1=on") == 0) {
         P2 |= 0x02;
-				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_7);
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_7, GPIO_PIN_SET);
       }
       else if (strcmp (var, "led2=on") == 0) {
-        //P2 |= 0x04;
-				HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);
+        P2 |= 0x04;
+				HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
       }
       else if (strcmp (var, "led3=on") == 0) {
         //P2 |= 0x08;
@@ -166,7 +161,7 @@ void netCGI_ProcessData (uint8_t code, const char *data, uint32_t len) {
         //P2 |= 0x80;
       }
       else if (strcmp (var, "ctrl=Browser") == 0) {
-        LEDrun = false; // Estaba comentado
+        //LEDrun = false; // Estaba comentado
 			}
 			else if ((strncmp (var, "pw0=", 4) == 0) ||
 								 (strncmp (var, "pw2=", 4) == 0)) {
@@ -181,24 +176,22 @@ void netCGI_ProcessData (uint8_t code, const char *data, uint32_t len) {
 						}
 					}
       }
-      else if (strncmp (var, "lcd1=", 5) == 0) {
+      else if (strncmp (var, "lcd1=", 5) == 0) { // Compara los primeros 5 caracteres
         // LCD Module line 1 text
-//        strcpy (lcd_text[0], var+5);
-//        osThreadFlagsSet (TID_Display, 0x01);
+        strcpy (textL1, var+5); // Copiar en lcd_text lo que en var a partir del 5 elemento (var+5) -> suma 5 al puntero que apunta a var 
+        osThreadFlagsSet(tid_ThDisplay, 0x01);
       }
       else if (strncmp (var, "lcd2=", 5) == 0) {
         // LCD Module line 2 text
-//        strcpy (lcd_text[1], var+5);
-//        osThreadFlagsSet (TID_Display, 0x01);
+        strcpy (textL2, var+5);
+        osThreadFlagsSet(tid_ThDisplay, 0x01);
+      }
+      else{
+        HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_7|GPIO_PIN_14, GPIO_PIN_RESET);
       }
     }
   } while (data);
 //  LED_SetOut (P2); // Se encienden los leds que se hayan seleccionado
-//	  if(P2 == 1) {
-//			//HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
-//			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
-//		}
-		
 }
 
 // Generate dynamic web data from a script line.
@@ -276,18 +269,18 @@ uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *p
     case 'b':
       // LED control from 'led.cgi'
       if (env[2] == 'c') {
-        // Select Control
+        // Select Control: el modo de control lo realiza mediante LEDrun que indica si el control es con la web o en modo running, de esta manera se cambiaría la seleccion que se hiciera en la web, en nuestro caso no lo usamos
         len = (uint32_t)sprintf (buf, &env[4], LEDrun ?     ""     : "selected",
                                                LEDrun ? "selected" :    ""     );
         break;
       }
       // LED CheckBoxes: indica la casilla que se ha marcado como "checked" o ""
-      id = env[2] - '0';
-      if (id > 7) {
+      id = env[2] - '0'; // Al restar un char con '0' si ese char es '0' a´'9' (en ASCII) entonces se obtiene el valor numérico del digito -> '5' - '0' -> 110100(53) - 110000(48) = 5, sirve para pasar de caracter a entero. 
+      if (id > 7) { // id vale desde 0 hasta 7 que corresponde con las 8 casillas del checkbox
         id = 0;
       }
-      id = (uint8_t)(1U << id);
-      len = (uint32_t)sprintf (buf, &env[4], (P2 & id) ? "checked" : "");
+      id = (uint8_t)(1U << id); // 00000001 << id -> id == 1 -> 00000010 (activa el bit 1 de id) -> es una decodificacion donde pasamos segun sea el valor decimal a un valor id que se activa el bit correspondiente a ese valor decimal 
+      len = (uint32_t)sprintf (buf, &env[4], (P2 & id) ? "checked" : ""); // True cuando al menos P2 e id coinciden en un bit
 		
       break;
 
@@ -366,15 +359,15 @@ uint32_t netCGI_Script (const char *env, char *buf, uint32_t buflen, uint32_t *p
       break;
 
     case 'f':
-//      // LCD Module control from 'lcd.cgi'
-//      switch (env[2]) {
-//        case '1':
-//          len = (uint32_t)sprintf (buf, &env[4], lcd_text[0]);
-//          break;
-//        case '2':
-//          len = (uint32_t)sprintf (buf, &env[4], lcd_text[1]);
-//          break;
-//      }
+      // LCD Module control from 'lcd.cgi'
+      switch (env[2]) {
+        case '1':
+          len = (uint32_t)sprintf (buf, &env[4], textL1);
+          break;
+        case '2':
+          len = (uint32_t)sprintf (buf, &env[4], textL2);
+          break;
+      }
       break;
 
     case 'g':
