@@ -18,6 +18,7 @@
 //#include "Board_ADC.h"                  // ::Board Support:A/D Converter
 //#include "Board_GLCD.h"                 // ::Board Support:Graphic LCD
 //#include "GLCD_Config.h"                // Keil.MCBSTM32F400::Board Support:Graphic LCD
+#include "lcd.h"
 
 // Main stack size must be multiple of 8 Bytes
 #define APP_MAIN_STK_SZ (1024U)
@@ -44,15 +45,23 @@ const osThreadAttr_t app_main_attr = {
 //char lcd_text[2][20+1] = { "LCD line 1",
 //                           "LCD line 2" };
 
+extern char textL1[20];
+extern char textL2[20];
+extern uint8_t posicion_L1;
+extern uint8_t posicion_L2;
+
 ///* Thread IDs */
-//osThreadId_t TID_Display;
+//extern osThreadId_t tid_ThDisplay; // thread id
+osThreadId_t tid_ThDisplay; // thread id
 //osThreadId_t TID_Led;
 
 ///* Thread declarations */
 //static void BlinkLed (void *arg);
-//static void Display  (void *arg);
+//static __NO_RETURN void Thread_Display (void *arg); // thread function
+void Thread_Display (void *arg); // thread function
+int Init_Thread_Display (void);
 
-__NO_RETURN void app_main (void *arg);
+__NO_RETURN void app_main (void *arg); // thread function principal
 
 static void Led_Init(void);
 
@@ -176,9 +185,20 @@ static void Led_Init(void){
 //}
 
 ///*----------------------------------------------------------------------------
-//  Thread 'Display': LCD display handler
+//  Thread 'Display': LCD display handler for STM32F429ZiTx
 // *---------------------------------------------------------------------------*/
-//static __NO_RETURN void Display (void *arg) {
+int Init_Thread_Display (void) {
+ 
+  tid_ThDisplay = osThreadNew(Thread_Display, NULL, NULL); // Creacion del hilo del display
+  if (tid_ThDisplay == NULL) {
+    return(-1);
+  }
+ 
+  return(0);
+}
+
+//static __NO_RETURN void Thread_Display (void *arg) {
+void Thread_Display (void *arg) {
 //  static uint8_t ip_addr[NET_ADDR_IP6_LEN];
 //  static char    ip_ascii[40];
 //  static char    buf[24];
@@ -226,7 +246,22 @@ static void Led_Init(void){
 //    sprintf (buf, "%-20s", lcd_text[1]);
 //    GLCD_DrawString (x*16U, 8U*24U, buf);
 //  }
-//}
+	//uint32_t flags;
+
+  while(1) {
+		/* Wait for signal from DHCP */
+    osThreadFlagsWait(0x01, osFlagsWaitAny, osWaitForever);
+		
+		/* Display user text lines */
+		posicion_L1 = 0;
+		posicion_L2 = 0;
+		textToLocalBufferL1(textL1);
+		textToLocalBufferL2(textL2);
+		LCD_update();
+		
+		//osThreadYield();                            // suspend thread
+	}	
+}
 
 
 /*----------------------------------------------------------------------------
@@ -238,12 +273,22 @@ __NO_RETURN void app_main (void *arg) {
 //  LED_Initialize();
 //  Buttons_Initialize();
 //  ADC_Initialize();
-	Led_Init(); // Inicializar los LEDs
+	/*  Inicializar los LEDs */
+	Led_Init(); 
+	/* Inicializar Display */
+	LCD_Clean();
+	LCD_Reset();
+	LCD_Init();
 
-  netInitialize (); // Inicializar Network Component y la interfaz
+	
+  netInitialize(); // Inicializar Network Component y la interfaz
 
 //  TID_Led     = osThreadNew (BlinkLed, NULL, NULL);
-//  TID_Display = osThreadNew (Display,  NULL, NULL);
+//  Th_Display = osThreadNew (Thread_Display,  NULL, NULL);
+	
+	//Init_Thread_Display(); // Inicializar el thread para el display
+	
+	tid_ThDisplay = osThreadNew(Thread_Display, NULL, NULL);
 
   osThreadExit(); // Termina la ejecución de este hilo que estaba corriendo
 }
